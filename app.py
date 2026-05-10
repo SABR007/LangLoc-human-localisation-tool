@@ -8,7 +8,7 @@ from metrics import build_iou_context, evaluate
 
 app = Flask(__name__)
 
-SCENES_DIR = Path(__file__).parent.parent / 'scenes_for_human_annotation'
+SCENES_DIR = Path(__file__).parent.parent / 'scenes_for_human_annotation_humanized_FULL'
 ANNOTATIONS_FILE = Path(__file__).parent / 'annotations' / 'annotations.json'
 EYE_HEIGHT = 1.6
 
