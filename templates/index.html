@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LangLoc Human Annotator</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  header { background: #1a1d27; border-bottom: 1px solid #2e3147; padding: 10px 20px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+  header h1 { font-size: 16px; font-weight: 600; color: #7eb8f7; letter-spacing: 0.5px; }
+  header .badge { background: #2e3147; border-radius: 4px; padding: 3px 8px; font-size: 11px; color: #888; }
+
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* LEFT PANEL */
+  .sidebar { width: 320px; flex-shrink: 0; background: #13161f; border-right: 1px solid #2e3147; display: flex; flex-direction: column; overflow: hidden; }
+
+  .sidebar-section { padding: 14px 16px; border-bottom: 1px solid #1f2235; }
+  .sidebar-section label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: #6b7280; margin-bottom: 6px; }
+  select { width: 100%; background: #1e2130; border: 1px solid #2e3147; color: #e0e0e0; padding: 7px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  select:focus { outline: none; border-color: #7eb8f7; }
+
+  .desc-list { flex: 1; overflow-y: auto; padding: 10px 16px; display: flex; flex-direction: column; gap: 8px; }
+  .desc-card { background: #1a1d27; border: 1px solid #2e3147; border-radius: 8px; padding: 10px 12px; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+  .desc-card:hover { border-color: #4a5568; }
+  .desc-card.active { border-color: #7eb8f7; background: #1e2a3a; }
+  .desc-card .img-id { font-size: 10px; color: #6b7280; margin-bottom: 4px; font-family: monospace; }
+  .desc-card .desc-text { font-size: 12px; line-height: 1.5; color: #c9d1d9; }
+
+  /* CONTROLS */
+  .controls-panel { padding: 14px 16px; border-top: 1px solid #1f2235; display: flex; flex-direction: column; gap: 10px; }
+  .mode-btns { display: flex; gap: 8px; }
+  .btn { flex: 1; padding: 8px 10px; border-radius: 6px; border: 1px solid #2e3147; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; background: #1e2130; color: #9ca3af; }
+  .btn:hover { border-color: #4a5568; color: #e0e0e0; }
+  .btn.active { background: #1e3a5f; border-color: #7eb8f7; color: #7eb8f7; }
+  .btn.save { background: #14532d; border-color: #16a34a; color: #4ade80; flex: none; width: 100%; }
+  .btn.save:hover { background: #166534; }
+  .btn.save:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn.reset { background: #1e2130; border-color: #374151; color: #9ca3af; flex: none; width: 100%; }
+
+  .hint { font-size: 11px; color: #6b7280; line-height: 1.5; }
+  .hint span { color: #7eb8f7; }
+
+  /* POSE PANEL */
+  .pose-panel { padding: 12px 16px; border-top: 1px solid #1f2235; }
+  .pose-panel h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: #6b7280; margin-bottom: 8px; }
+  .pose-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; margin-bottom: 8px; }
+  .pose-cell { background: #1a1d27; border: 1px solid #2e3147; border-radius: 3px; padding: 4px 2px; text-align: center; font-size: 10px; font-family: monospace; color: #7eb8f7; }
+  .pose-cell.pos { color: #f59e0b; }
+  .pose-cell.last-row { color: #4b5563; }
+  .vec-row { display: flex; gap: 6px; margin-top: 4px; }
+  .vec-label { font-size: 10px; color: #6b7280; min-width: 60px; line-height: 1.8; }
+  .vec-val { font-size: 10px; font-family: monospace; color: #a78bfa; background: #1a1d27; border: 1px solid #2e3147; border-radius: 3px; padding: 2px 6px; flex: 1; text-align: center; }
+
+  /* VIEWPORT */
+  .viewport { flex: 1; position: relative; overflow: hidden; }
+  #canvas { display: block; width: 100%; height: 100%; }
+
+  .mode-indicator { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.75); border: 1px solid #2e3147; border-radius: 20px; padding: 5px 16px; font-size: 12px; font-weight: 600; pointer-events: none; transition: all 0.2s; }
+  .mode-indicator.pos-mode { border-color: #f59e0b; color: #f59e0b; }
+  .mode-indicator.dir-mode { border-color: #a78bfa; color: #a78bfa; }
+  .mode-indicator.idle { color: #6b7280; }
+
+  .status-bar { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.75); border: 1px solid #2e3147; border-radius: 6px; padding: 5px 14px; font-size: 11px; color: #6b7280; pointer-events: none; }
+
+  .save-toast { position: absolute; top: 12px; right: 12px; background: #14532d; border: 1px solid #16a34a; color: #4ade80; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+  .save-toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>LangLoc Human Annotator</h1>
+  <span class="badge">ScanNet · A3 MAP Selection</span>
+  <span class="badge" id="anno-count">0 annotations saved</span>
+</header>
+
+<div class="main">
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <label>Scene</label>
+      <select id="scene-select"><option value="">— select scene —</option></select>
+    </div>
+
+    <div class="sidebar-section" style="padding-bottom:8px;">
+      <label>Language Queries <span id="desc-count" style="font-size:10px;color:#7eb8f7;"></span></label>
+    </div>
+    <div class="desc-list" id="desc-list">
+      <div style="font-size:12px;color:#4b5563;padding:8px 0;">Select a scene to see queries.</div>
+    </div>
+
+    <div class="controls-panel">
+      <div class="mode-btns">
+        <button class="btn" id="btn-pos" onclick="setMode('position')">📍 Set Position</button>
+        <button class="btn" id="btn-dir" onclick="setMode('direction')" disabled>🎯 Set Direction</button>
+      </div>
+      <div class="hint" id="hint-text">Select a scene and a query, then click <span>Set Position</span> to begin.</div>
+      <button class="btn reset" onclick="resetAnnotation()">↺ Reset</button>
+      <button class="btn save" id="btn-save" disabled onclick="saveAnnotation()">💾 Save Annotation</button>
+    </div>
+
+    <div class="pose-panel" id="pose-panel" style="display:none;">
+      <h3>Pose Output</h3>
+      <div class="pose-grid" id="pose-grid"></div>
+      <div class="vec-row">
+        <span class="vec-label">Position</span>
+        <span class="vec-val" id="v-pos">—</span>
+      </div>
+      <div class="vec-row">
+        <span class="vec-label">Direction</span>
+        <span class="vec-val" id="v-dir">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- VIEWPORT -->
+  <div class="viewport">
+    <canvas id="canvas"></canvas>
+    <div class="mode-indicator idle" id="mode-indicator">Navigate · Orbit / Pan / Zoom</div>
+    <div class="status-bar" id="status-bar">No scene loaded</div>
+    <div class="save-toast" id="save-toast">✓ Annotation saved!</div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+
+// ── State ────────────────────────────────────────────────────────────────────
+const state = {
+  mode: 'idle',          // idle | position | direction
+  positionSet: false,
+  directionSet: false,
+  position: null,        // {x, y}  z fixed at 1.6
+  direction: null,       // {dx, dy, dz}
+  poseMatrix: null,
+  positionVec: null,
+  directionVec: null,
+  selectedDesc: null,
+  sceneMesh: null,
+};
+
+// ── Three.js setup ────────────────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setClearColor(0x0f1117);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, 1, 0.01, 200);
+camera.position.set(5, -5, 8);
+camera.up.set(0, 0, 1);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.screenSpacePanning = false;
+controls.minDistance = 0.5;
+controls.maxDistance = 50;
+controls.zoomSpeed = 1.2;
+
+// Ambient + directional lights (for any shaded geometry)
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight.position.set(5, 5, 10);
+scene.add(dirLight);
+
+// Markers group
+const markerGroup = new THREE.Group();
+scene.add(markerGroup);
+
+// Raycaster
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+// ── Resize ────────────────────────────────────────────────────────────────────
+function resize() {
+  const vp = canvas.parentElement;
+  const w = vp.clientWidth, h = vp.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+// ── Scene loading ─────────────────────────────────────────────────────────────
+const loader = new PLYLoader();
+
+window.loadScene = function(sceneId) {
+  if (!sceneId) return;
+  document.getElementById('status-bar').textContent = 'Loading mesh…';
+
+  // Clear old mesh
+  if (state.sceneMesh) {
+    scene.remove(state.sceneMesh);
+    state.sceneMesh.geometry.dispose();
+    state.sceneMesh = null;
+  }
+  resetMarkers();
+
+  loader.load(`/api/scene/${sceneId}/ply`, (geometry) => {
+    geometry.computeVertexNormals();
+
+    // Vertex colors are stored as uint8 — Three.js PLYLoader provides them normalised
+    const material = new THREE.MeshLambertMaterial({ vertexColors: true });
+    const mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
+    state.sceneMesh = mesh;
+
+    // Centre camera on mesh
+    const box = new THREE.Box3().setFromObject(mesh);
+    const centre = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3()).length();
+    controls.target.copy(centre);
+    camera.position.set(centre.x, centre.y - size * 0.6, centre.z + size * 0.4);
+    camera.up.set(0, 0, 1);
+    controls.update();
+
+    document.getElementById('status-bar').textContent =
+      `${sceneId} · ${(geometry.attributes.position.count / 1000).toFixed(0)}k vertices · Click "Set Position" to begin`;
+  }, undefined, (err) => {
+    document.getElementById('status-bar').textContent = 'Error loading mesh.';
+    console.error(err);
+  });
+};
+
+// ── Markers ───────────────────────────────────────────────────────────────────
+let posMarker = null;
+let dirArrow = null;
+
+function resetMarkers() {
+  markerGroup.clear();
+  posMarker = null;
+  dirArrow = null;
+  state.positionSet = false;
+  state.directionSet = false;
+  state.position = null;
+  state.direction = null;
+  state.poseMatrix = null;
+  document.getElementById('pose-panel').style.display = 'none';
+  document.getElementById('btn-save').disabled = true;
+  document.getElementById('btn-dir').disabled = true;
+  updateHint();
+}
+
+function placePositionMarker(x, y) {
+  const EYE = 1.6;
+  if (posMarker) markerGroup.remove(posMarker);
+
+  const group = new THREE.Group();
+
+  // Sphere at eye height
+  const sphere = new THREE.Mesh(
+    new THREE.SphereGeometry(0.08, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xf59e0b, depthTest: false })
+  );
+  sphere.position.set(x, y, EYE);
+  group.add(sphere);
+
+  // Vertical pole
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.015, 0.015, EYE, 8),
+    new THREE.MeshBasicMaterial({ color: 0xf59e0b, depthTest: false })
+  );
+  pole.rotation.x = Math.PI / 2; // cylinder along Z in Three.js is Y-axis
+  // CylinderGeometry is along Y; rotate to Z
+  const poleGeom = new THREE.CylinderGeometry(0.015, 0.015, EYE, 8);
+  const poleMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b50, depthTest: false, transparent: true, opacity: 0.5 });
+  const poleM = new THREE.Mesh(poleGeom, poleMat);
+  poleM.rotation.x = Math.PI / 2;
+  poleM.position.set(x, y, EYE / 2);
+  group.add(poleM);
+
+  posMarker = group;
+  markerGroup.add(group);
+  state.position = { x, y };
+  state.positionSet = true;
+}
+
+function placeDirectionArrow(tx, ty, tz) {
+  if (dirArrow) markerGroup.remove(dirArrow);
+  if (!state.position) return;
+
+  const EYE = 1.6;
+  const ox = state.position.x, oy = state.position.y;
+
+  const dx = tx - ox, dy = ty - oy, dz = tz - (EYE);
+  const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  if (len < 0.001) return;
+
+  const ndx = dx/len, ndy = dy/len, ndz = dz/len;
+  state.direction = { dx: ndx, dy: ndy, dz: ndz };
+  state.directionSet = true;
+
+  // Arrow shaft + head using ArrowHelper
+  const origin = new THREE.Vector3(ox, oy, EYE);
+  const dir = new THREE.Vector3(ndx, ndy, ndz).normalize();
+  const arrow = new THREE.ArrowHelper(dir, origin, 1.2, 0xa78bfa, 0.3, 0.15);
+  arrow.line.material.depthTest = false;
+  arrow.cone.material.depthTest = false;
+
+  dirArrow = arrow;
+  markerGroup.add(arrow);
+
+  // Compute and display pose
+  computeAndShowPose(ox, oy, ndx, ndy, ndz);
+}
+
+async function computeAndShowPose(x, y, dx, dy, dz) {
+  const res = await fetch('/api/pose', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ x, y, dx, dy, dz }),
+  });
+  const data = await res.json();
+  state.poseMatrix = data.scene_pose;
+  state.positionVec = data.position;
+  state.directionVec = data.direction;
+  renderPosePanel(data);
+  document.getElementById('btn-save').disabled = !state.selectedDesc;
+}
+
+function renderPosePanel(data) {
+  const panel = document.getElementById('pose-panel');
+  panel.style.display = 'block';
+
+  const grid = document.getElementById('pose-grid');
+  grid.innerHTML = '';
+  data.scene_pose.forEach((row, ri) => {
+    row.forEach((val, ci) => {
+      const cell = document.createElement('div');
+      const isLastRow = ri === 3;
+      const isTranslation = ci === 3;
+      cell.className = 'pose-cell' + (isLastRow ? ' last-row' : '') + (isTranslation && !isLastRow ? ' pos' : '');
+      cell.textContent = isLastRow ? (ci === 3 ? '1' : '0') : val.toFixed(3);
+      grid.appendChild(cell);
+    });
+  });
+
+  document.getElementById('v-pos').textContent =
+    data.position.map(v => v.toFixed(3)).join(', ');
+  document.getElementById('v-dir').textContent =
+    data.direction.map(v => v.toFixed(3)).join(', ');
+}
+
+// ── Click handling ────────────────────────────────────────────────────────────
+canvas.addEventListener('click', (e) => {
+  if (state.mode === 'idle' || !state.sceneMesh) return;
+
+  const rect = canvas.getBoundingClientRect();
+  mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObject(state.sceneMesh);
+  if (!hits.length) return;
+
+  const pt = hits[0].point;
+
+  if (state.mode === 'position') {
+    placePositionMarker(pt.x, pt.y);
+    document.getElementById('btn-dir').disabled = false;
+    document.getElementById('status-bar').textContent =
+      `Position set at (${pt.x.toFixed(2)}, ${pt.y.toFixed(2)}, 1.60) · Now click "Set Direction"`;
+    updateHint();
+  } else if (state.mode === 'direction') {
+    placeDirectionArrow(pt.x, pt.y, pt.z);
+    document.getElementById('status-bar').textContent =
+      `Direction set · Pose computed · Save when ready`;
+    updateHint();
+  }
+});
+
+// ── Mode switching ────────────────────────────────────────────────────────────
+window.setMode = function(mode) {
+  state.mode = mode;
+  document.getElementById('btn-pos').classList.toggle('active', mode === 'position');
+  document.getElementById('btn-dir').classList.toggle('active', mode === 'direction');
+
+  const ind = document.getElementById('mode-indicator');
+  if (mode === 'position') {
+    ind.className = 'mode-indicator pos-mode';
+    ind.textContent = '📍 Click mesh to set your position';
+    controls.enabled = false;
+  } else if (mode === 'direction') {
+    ind.className = 'mode-indicator dir-mode';
+    ind.textContent = '🎯 Click where you are looking';
+    controls.enabled = false;
+  }
+};
+
+window.resetAnnotation = function() {
+  state.mode = 'idle';
+  controls.enabled = true;
+  document.getElementById('btn-pos').classList.remove('active');
+  document.getElementById('btn-dir').classList.remove('active');
+  document.getElementById('mode-indicator').className = 'mode-indicator idle';
+  document.getElementById('mode-indicator').textContent = 'Navigate · Orbit / Pan / Zoom';
+  resetMarkers();
+  document.getElementById('status-bar').textContent = 'Reset · Select a query and set position again';
+};
+
+// Re-enable orbit when not in a pick mode
+canvas.addEventListener('mousedown', () => {
+  if (state.mode === 'idle') controls.enabled = true;
+});
+
+// ── Save ──────────────────────────────────────────────────────────────────────
+window.saveAnnotation = async function() {
+  if (!state.poseMatrix || !state.selectedDesc) return;
+
+  const sceneId = document.getElementById('scene-select').value;
+  const annotation = {
+    scene_id: sceneId,
+    image_index: state.selectedDesc.image_index,
+    description: state.selectedDesc.description,
+    position: state.positionVec,
+    direction: state.directionVec,
+    scene_pose: state.poseMatrix,
+    timestamp: new Date().toISOString(),
+  };
+
+  const res = await fetch('/api/annotations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(annotation),
+  });
+  const data = await res.json();
+
+  document.getElementById('anno-count').textContent = `${data.total} annotation${data.total !== 1 ? 's' : ''} saved`;
+  const toast = document.getElementById('save-toast');
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2000);
+
+  // Advance to next description
+  const cards = document.querySelectorAll('.desc-card');
+  for (let i = 0; i < cards.length; i++) {
+    if (cards[i].dataset.idx == state.selectedDesc._idx) {
+      const next = cards[i + 1];
+      if (next) next.click();
+      break;
+    }
+  }
+  resetAnnotation();
+};
+
+// ── Descriptions ──────────────────────────────────────────────────────────────
+window.selectDesc = function(desc, idx, card) {
+  document.querySelectorAll('.desc-card').forEach(c => c.classList.remove('active'));
+  card.classList.add('active');
+  state.selectedDesc = { ...desc, _idx: idx };
+  if (state.poseMatrix) document.getElementById('btn-save').disabled = false;
+  updateHint();
+};
+
+function updateHint() {
+  const h = document.getElementById('hint-text');
+  if (!state.selectedDesc) {
+    h.innerHTML = 'Select a query from the list, then click <span>Set Position</span>.';
+  } else if (!state.positionSet) {
+    h.innerHTML = 'Query selected. Click <span>Set Position</span> then click on the mesh.';
+  } else if (!state.directionSet) {
+    h.innerHTML = 'Position set. Click <span>Set Direction</span> then click where you are looking.';
+  } else {
+    h.innerHTML = 'Pose computed. Press <span>Save Annotation</span> when satisfied.';
+  }
+}
+
+// ── Scene selector ────────────────────────────────────────────────────────────
+async function init() {
+  const res = await fetch('/api/scenes');
+  const scenes = await res.json();
+  const sel = document.getElementById('scene-select');
+  scenes.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s; opt.textContent = s;
+    sel.appendChild(opt);
+  });
+
+  // Count existing annotations
+  const ar = await fetch('/api/annotations');
+  const annotations = await ar.json();
+  document.getElementById('anno-count').textContent =
+    `${annotations.length} annotation${annotations.length !== 1 ? 's' : ''} saved`;
+}
+
+document.getElementById('scene-select').addEventListener('change', async (e) => {
+  const sceneId = e.target.value;
+  if (!sceneId) return;
+
+  resetAnnotation();
+  window.loadScene(sceneId);
+
+  const res = await fetch(`/api/scene/${sceneId}/descriptions`);
+  const descs = await res.json();
+  const list = document.getElementById('desc-list');
+  list.innerHTML = '';
+  document.getElementById('desc-count').textContent = `(${descs.length})`;
+
+  descs.forEach((d, i) => {
+    const card = document.createElement('div');
+    card.className = 'desc-card';
+    card.dataset.idx = i;
+    card.innerHTML = `<div class="img-id">Query #${i+1} · frame ${d.image_index}</div>
+                      <div class="desc-text">${d.description}</div>`;
+    card.onclick = () => selectDesc(d, i, card);
+    list.appendChild(card);
+  });
+
+  updateHint();
+});
+
+init();
+</script>
+</body>
+</html>

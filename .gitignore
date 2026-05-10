@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+venv/
+.venv/
+
+# Annotation outputs (user-generated, not part of the tool)
+annotations/*.json
+
+# macOS
+.DS_Store
+
+# Scene data (large ScanNet files — not committed)
+scenes/
