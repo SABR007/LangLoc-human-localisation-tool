@@ -16,8 +16,8 @@ try:
 except ImportError:
     o3d = None
 
-H_FOV_DEG = 39.31
-V_FOV_DEG = 64.76
+H_FOV_DEG = 58.30  # ScanNet
+V_FOV_DEG = 45.33  # ScanNet
 NEAR = 0.05
 
 
