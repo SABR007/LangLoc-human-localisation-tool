@@ -67,6 +67,25 @@
 
   .save-toast { position: absolute; top: 12px; right: 12px; background: #14532d; border: 1px solid #16a34a; color: #4ade80; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
   .save-toast.show { opacity: 1; }
+
+  /* METRICS OVERLAY */
+  .metrics-overlay { position: absolute; inset: 0; background: rgba(10,12,20,0.88); display: flex; align-items: center; justify-content: center; z-index: 10; opacity: 0; pointer-events: none; transition: opacity 0.25s; }
+  .metrics-overlay.show { opacity: 1; pointer-events: all; }
+  .metrics-card { background: #13161f; border: 1px solid #2e3147; border-radius: 14px; padding: 28px 32px; min-width: 360px; max-width: 480px; }
+  .metrics-card h2 { font-size: 15px; font-weight: 700; color: #e0e0e0; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
+  .metrics-card h2 span.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #2e3147; border-top-color: #7eb8f7; border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .metric-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid #1f2235; }
+  .metric-row:last-of-type { border-bottom: none; }
+  .metric-label { font-size: 12px; color: #9ca3af; }
+  .metric-value { font-size: 18px; font-weight: 700; font-family: monospace; }
+  .metric-badge { font-size: 10px; font-weight: 600; border-radius: 4px; padding: 2px 7px; margin-left: 8px; }
+  .green  { color: #4ade80; } .green-bg  { background: #14532d; color: #4ade80; }
+  .yellow { color: #fbbf24; } .yellow-bg { background: #451a03; color: #fbbf24; }
+  .red    { color: #f87171; } .red-bg    { background: #450a0a; color: #f87171; }
+  .gray   { color: #6b7280; }
+  .metrics-actions { display: flex; gap: 10px; margin-top: 20px; }
+  .metrics-actions .btn { flex: 1; padding: 10px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -122,6 +141,18 @@
     <div class="mode-indicator idle" id="mode-indicator">Navigate · Orbit / Pan / Zoom</div>
     <div class="status-bar" id="status-bar">No scene loaded</div>
     <div class="save-toast" id="save-toast">✓ Annotation saved!</div>
+
+    <!-- METRICS OVERLAY -->
+    <div class="metrics-overlay" id="metrics-overlay">
+      <div class="metrics-card">
+        <h2 id="metrics-title"><span class="spinner" id="metrics-spinner"></span> Computing metrics…</h2>
+        <div id="metrics-body"></div>
+        <div class="metrics-actions" id="metrics-actions" style="display:none;">
+          <button class="btn reset" onclick="closeMetrics()">Close</button>
+          <button class="btn save" onclick="closeMetrics(true)">Next Query →</button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -428,7 +459,7 @@ canvas.addEventListener('mousedown', () => {
   if (state.mode === 'idle') controls.enabled = true;
 });
 
-// ── Save ──────────────────────────────────────────────────────────────────────
+// ── Save + Metrics ────────────────────────────────────────────────────────────
 window.saveAnnotation = async function() {
   if (!state.poseMatrix || !state.selectedDesc) return;
 
@@ -443,6 +474,13 @@ window.saveAnnotation = async function() {
     timestamp: new Date().toISOString(),
   };
 
+  // Show overlay in loading state
+  const overlay = document.getElementById('metrics-overlay');
+  document.getElementById('metrics-title').innerHTML = '<span class="spinner" id="metrics-spinner"></span> Computing metrics…';
+  document.getElementById('metrics-body').innerHTML = '';
+  document.getElementById('metrics-actions').style.display = 'none';
+  overlay.classList.add('show');
+
   const res = await fetch('/api/annotations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -451,20 +489,92 @@ window.saveAnnotation = async function() {
   const data = await res.json();
 
   document.getElementById('anno-count').textContent = `${data.total} annotation${data.total !== 1 ? 's' : ''} saved`;
-  const toast = document.getElementById('save-toast');
-  toast.classList.add('show');
-  setTimeout(() => toast.classList.remove('show'), 2000);
+  renderMetrics(data.metrics);
+  state._savedDescIdx = state.selectedDesc._idx;
+  resetAnnotation();
+};
 
-  // Advance to next description
-  const cards = document.querySelectorAll('.desc-card');
-  for (let i = 0; i < cards.length; i++) {
-    if (cards[i].dataset.idx == state.selectedDesc._idx) {
-      const next = cards[i + 1];
-      if (next) next.click();
-      break;
+function metricColor(value, thresholds) {
+  // thresholds: [good_max, ok_max] — lower is better (pos/ang) or [good_min, ok_min] for IoU
+  const [good, ok] = thresholds.direction === 'higher'
+    ? [thresholds.good, thresholds.ok]
+    : [thresholds.good, thresholds.ok];
+  if (thresholds.direction === 'higher') {
+    return value >= good ? 'green' : value >= ok ? 'yellow' : 'red';
+  }
+  return value <= good ? 'green' : value <= ok ? 'yellow' : 'red';
+}
+
+function renderMetrics(m) {
+  document.getElementById('metrics-title').textContent = '📊 Evaluation Results';
+
+  const posColor  = m.pos_err  <= 0.5  ? 'green' : m.pos_err  <= 1.0  ? 'yellow' : 'red';
+  const angColor  = m.ang_err  <= 15   ? 'green' : m.ang_err  <= 30   ? 'yellow' : 'red';
+  const iouColor  = m.iou != null ? (m.iou >= 0.5 ? 'green' : m.iou >= 0.25 ? 'yellow' : 'red') : 'gray';
+  const ierrColor = m.iou_error != null ? (m.iou_error <= 0.5 ? 'green' : m.iou_error <= 0.75 ? 'yellow' : 'red') : 'gray';
+
+  const posBadge  = posColor  === 'green' ? 'green-bg'  : posColor  === 'yellow' ? 'yellow-bg' : 'red-bg';
+  const angBadge  = angColor  === 'green' ? 'green-bg'  : angColor  === 'yellow' ? 'yellow-bg' : 'red-bg';
+  const iouBadge  = iouColor  === 'green' ? 'green-bg'  : iouColor  === 'yellow' ? 'yellow-bg' : iouColor === 'red' ? 'red-bg' : '';
+
+  const posLabel  = posColor  === 'green' ? '≤ 0.5 m ✓' : posColor  === 'yellow' ? '≤ 1.0 m' : '> 1.0 m';
+  const angLabel  = angColor  === 'green' ? '≤ 15° ✓'   : angColor  === 'yellow' ? '≤ 30°'   : '> 30°';
+  const iouLabel  = m.iou != null ? (iouColor === 'green' ? '≥ 0.50 ✓' : iouColor === 'yellow' ? '≥ 0.25' : '< 0.25') : 'n/a';
+
+  const gtPos = m.gt_position ? m.gt_position.map(v => v.toFixed(2)).join(', ') : '—';
+  const gtDir = m.gt_direction ? m.gt_direction.map(v => v.toFixed(3)).join(', ') : '—';
+
+  document.getElementById('metrics-body').innerHTML = `
+    <div class="metric-row">
+      <span class="metric-label">Position Error</span>
+      <span>
+        <span class="metric-value ${posColor}">${m.pos_err.toFixed(3)} m</span>
+        <span class="metric-badge ${posBadge}">${posLabel}</span>
+      </span>
+    </div>
+    <div class="metric-row">
+      <span class="metric-label">Angular Error</span>
+      <span>
+        <span class="metric-value ${angColor}">${m.ang_err.toFixed(1)}°</span>
+        <span class="metric-badge ${angBadge}">${angLabel}</span>
+      </span>
+    </div>
+    <div class="metric-row">
+      <span class="metric-label">View IoU</span>
+      <span>
+        <span class="metric-value ${iouColor}">${m.iou != null ? m.iou.toFixed(3) : '—'}</span>
+        ${m.iou != null ? `<span class="metric-badge ${iouBadge}">${iouLabel}</span>` : '<span class="gray" style="font-size:11px">unavailable</span>'}
+      </span>
+    </div>
+    <div class="metric-row">
+      <span class="metric-label">IoU Error (1 − IoU)</span>
+      <span class="metric-value ${ierrColor}">${m.iou_error != null ? m.iou_error.toFixed(3) : '—'}</span>
+    </div>
+    <div class="metric-row" style="margin-top:8px;">
+      <span class="metric-label" style="font-size:10px;">GT position</span>
+      <span style="font-size:10px;font-family:monospace;color:#6b7280;">${gtPos}</span>
+    </div>
+    <div class="metric-row">
+      <span class="metric-label" style="font-size:10px;">GT direction</span>
+      <span style="font-size:10px;font-family:monospace;color:#6b7280;">${gtDir}</span>
+    </div>
+  `;
+
+  document.getElementById('metrics-actions').style.display = 'flex';
+}
+
+window.closeMetrics = function(advance = false) {
+  document.getElementById('metrics-overlay').classList.remove('show');
+  if (advance) {
+    const cards = document.querySelectorAll('.desc-card');
+    for (let i = 0; i < cards.length; i++) {
+      if (parseInt(cards[i].dataset.idx) === state._savedDescIdx) {
+        const next = cards[i + 1];
+        if (next) next.click();
+        break;
+      }
     }
   }
-  resetAnnotation();
 };
 
 // ── Descriptions ──────────────────────────────────────────────────────────────

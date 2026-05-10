@@ -1,8 +1,10 @@
 import json
-import math
-import os
 from pathlib import Path
+
+import numpy as np
 from flask import Flask, jsonify, send_file, render_template, request
+
+from metrics import build_iou_context, evaluate
 
 app = Flask(__name__)
 
@@ -10,13 +12,23 @@ SCENES_DIR = Path(__file__).parent.parent / 'scenes_for_human_annotation'
 ANNOTATIONS_FILE = Path(__file__).parent / 'annotations' / 'annotations.json'
 EYE_HEIGHT = 1.6
 
+# Per-scene IoU context cache (mesh + raycasting scene, expensive to build once)
+_iou_cache: dict = {}
+
+
+def _get_iou_context(scene_id: str):
+    if scene_id not in _iou_cache:
+        try:
+            _iou_cache[scene_id] = build_iou_context(SCENES_DIR / scene_id)
+        except Exception as e:
+            app.logger.warning(f"IoU context build failed for {scene_id}: {e}")
+            _iou_cache[scene_id] = None
+    return _iou_cache[scene_id]
+
 
 def build_pose_matrix(x, y, dx, dy, dz):
-    """Build 4x4 scene_pose from XY position (z fixed at 1.6m) and direction vector."""
-    import numpy as np
-    position = [x, y, EYE_HEIGHT]
-    direction = [dx, dy, dz]
-    forward = np.array(direction, dtype=float)
+    position = np.array([x, y, EYE_HEIGHT], dtype=float)
+    forward = np.array([dx, dy, dz], dtype=float)
     forward /= np.linalg.norm(forward)
 
     world_up = np.array([0.0, 0.0, 1.0])
@@ -27,7 +39,7 @@ def build_pose_matrix(x, y, dx, dy, dz):
     right /= np.linalg.norm(right)
     up = np.cross(forward, right)
 
-    m = [[0.0]*4 for _ in range(4)]
+    m = [[0.0] * 4 for _ in range(4)]
     for i in range(3):
         m[i][0] = float(right[i])
         m[i][1] = float(up[i])
@@ -36,7 +48,7 @@ def build_pose_matrix(x, y, dx, dy, dz):
     m[1][3] = float(position[1])
     m[2][3] = float(position[2])
     m[3][3] = 1.0
-    return m, list(map(float, position)), list(map(float, forward))
+    return m, position, forward
 
 
 @app.route('/')
@@ -65,12 +77,12 @@ def get_descriptions(scene_id):
         return jsonify([])
     with open(desc_path) as f:
         data = json.load(f)
-    # Return only scene_index, image_index, description (no large visible_objects)
     simplified = [
         {
             'scene_index': d.get('scene_index', scene_id),
             'image_index': d.get('image_index', str(i)),
             'description': d.get('description', ''),
+            'gt_scene_pose': d.get('scene_pose'),
         }
         for i, d in enumerate(data)
     ]
@@ -83,13 +95,25 @@ def compute_pose():
     x, y = float(body['x']), float(body['y'])
     dx, dy, dz = float(body['dx']), float(body['dy']), float(body['dz'])
     matrix, position, direction = build_pose_matrix(x, y, dx, dy, dz)
-    return jsonify({'scene_pose': matrix, 'position': position, 'direction': direction})
+    return jsonify({'scene_pose': matrix,
+                    'position': position.tolist(),
+                    'direction': direction.tolist()})
 
 
 @app.route('/api/annotations', methods=['GET', 'POST'])
 def annotations():
     if request.method == 'POST':
-        annotation = request.json
+        body = request.json
+        scene_id = body['scene_id']
+        image_index = body['image_index']
+        pred_pos = np.array(body['position'], dtype=float)
+        pred_dir = np.array(body['direction'], dtype=float)
+
+        ctx = _get_iou_context(scene_id)
+        metrics = evaluate(SCENES_DIR / scene_id, image_index, pred_pos, pred_dir, ctx)
+
+        annotation = {**body, 'metrics': metrics}
+
         existing = []
         if ANNOTATIONS_FILE.exists():
             with open(ANNOTATIONS_FILE) as f:
@@ -97,7 +121,9 @@ def annotations():
         existing.append(annotation)
         with open(ANNOTATIONS_FILE, 'w') as f:
             json.dump(existing, f, indent=2)
-        return jsonify({'status': 'saved', 'total': len(existing)})
+
+        return jsonify({'status': 'saved', 'total': len(existing), 'metrics': metrics})
+
     else:
         if ANNOTATIONS_FILE.exists():
             with open(ANNOTATIONS_FILE) as f:
